@@ -1,0 +1,478 @@
+from pathlib import Path
+import re
+import uuid
+import zipfile
+import xml.etree.ElementTree as ET
+from fastapi import FastAPI, Request, Form, Depends, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
+import sqlite3
+
+from sync_responses import import_sheet_rows
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_FILE = str(BASE_DIR / "database.db")
+HTML_FILE = BASE_DIR / "clinic-experience-dashboard.html"
+SOP_FILE = BASE_DIR / "Experience Manager@Cx - SOP.pdf"
+KRA_FILE = BASE_DIR / "Experience Manager@Cx - KRA's.pdf"
+APPOINTMENT_ACTIONS_FILE = BASE_DIR / "Book1.xlsx"
+
+VALID_USER_PASSWORD = "Password123"
+SESSION_COOKIE_NAME = "session_token"
+SESSIONS = {}
+
+USER_CLINIC_ACCESS = {
+    "hina.sharma@vetic.in": "Vetic Pet Care, Sector 49, Noida",
+}
+USER_DISPLAY_NAMES = {
+    "hina.sharma@vetic.in": "Hina Sharma",
+}
+
+app = FastAPI()
+
+
+def sync_form_responses_on_startup() -> None:
+    sheet_file = BASE_DIR / "Experience Manager@Cx - Today.csv"
+    if not sheet_file.exists():
+        return
+
+    try:
+        imported = import_sheet_rows(csv_path=str(sheet_file), db_path=DB_FILE, table_name="users")
+        print(f"Imported {imported} new response rows from {sheet_file.name}")
+    except Exception as exc:
+        print(f"Failed to sync response sheet: {exc}")
+
+
+@app.on_event("startup")
+def startup_event() -> None:
+    sync_form_responses_on_startup()
+
+
+FIXED_CLINICS = [
+    "Vetic Pet Care Centre, Andheri West, Mumbai",
+    "Vetic Pet Care Centre, Sector 45",
+    "Vetic Pet Care, Sector 49, Noida",
+    "Vetic Pet Care Centre, Greater Kailash 1 ,New Delhi",
+    "Vetic Pet Care Centre, Chembur, Mumbai",
+    "Vetic Pet Care, Dwarka Sector 17, New Delhi",
+]
+
+
+def normalize_text(value: str) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", str(value)).strip().lower()
+
+
+def get_display_fields(row):
+    field_candidates = [
+        ("Client Name", ["client_name", "customer_name", "client"]),
+        ("Appointment Type", ["appointment_type", "appointment type", "service"]),
+        ("Date", ["date", "appointment_date", "start_time", "created_at"]),
+        ("Resource Details", ["resource_details", "resource", "resource_name"]),
+        ("Booking Source", ["booking_source", "booking source", "source"]),
+        ("Done", ["done", "status"]),
+    ]
+
+    values = []
+    for label, aliases in field_candidates:
+        for key in row.keys():
+            if any(normalize_text(key) == normalize_text(alias) for alias in aliases):
+                value = row.get(key)
+                if value is not None and str(value).strip() != "":
+                    values.append((label, str(value).strip()))
+                break
+    return values
+
+
+def get_client_name(row):
+    for key in row.keys():
+        if any(normalize_text(key) == normalize_text(alias) for alias in ["client_name", "customer_name", "client"]):
+            value = row.get(key)
+            if value is not None:
+                return normalize_text(str(value))
+    return ""
+
+
+def create_session(email: str) -> str:
+    token = uuid.uuid4().hex
+    SESSIONS[token] = email
+    return token
+
+
+def get_current_user(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    return SESSIONS.get(token)
+
+
+def get_user_allowed_clinic(email: str):
+    if not email:
+        return None
+    return USER_CLINIC_ACCESS.get(email.strip().lower())
+
+
+def require_auth(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return user
+
+
+def login_page(error: str = "") -> str:
+    error_html = f"<p class='error'>{error}</p>" if error else ""
+    return f"""<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+<meta charset=\"UTF-8\">
+<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+<title>Vetic Login</title>
+<style>
+  body {{ margin: 0; font-family: 'Inter', sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #eef4fb; }}
+  .login-card {{ width: min(420px, 90vw); background: #fff; padding: 36px; border-radius: 22px; box-shadow: 0 24px 60px rgba(15, 42, 84, 0.12); }}
+  h1 {{ margin: 0 0 12px; font-size: 28px; color: #1a3c82; }}
+  p {{ margin: 0 0 22px; color: #4a5568; line-height: 1.5; }}
+  .input-group {{ margin-bottom: 18px; }}
+  label {{ display: block; margin-bottom: 8px; font-size: 13px; color: #5f6c87; text-transform: uppercase; letter-spacing: 0.04em; }}
+  input {{ width: 100%; padding: 14px 16px; border: 1px solid #d5dce8; border-radius: 14px; font-size: 15px; outline: none; transition: border-color 0.2s; }}
+  input:focus {{ border-color: #3f76f1; box-shadow: 0 0 0 4px rgba(63, 118, 241, 0.08); }}
+  button {{ width: 100%; padding: 14px 18px; border: none; border-radius: 14px; background: #1a73e8; color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; transition: background 0.2s; }}
+  button:hover {{ background: #1557b0; }}
+  .error {{ margin: 0 0 16px; color: #c5221f; font-weight: 600; }}
+</style>
+</head>
+<body>
+  <div class=\"login-card\">
+    <h1>Vetic Login</h1>
+    <p>Enter your email and password to access the Experience Manager dashboard.</p>
+    {error_html}
+    <form method=\"post\" action=\"/login\">
+      <div class=\"input-group\">
+        <label for=\"email\">Email</label>
+        <input id=\"email\" type=\"email\" name=\"email\" required>
+      </div>
+      <div class=\"input-group\">
+        <label for=\"password\">Password</label>
+        <input id=\"password\" type=\"password\" name=\"password\" required>
+      </div>
+      <button type=\"submit\">Sign In</button>
+    </form>
+  </div>
+</body>
+</html>"""
+
+
+def load_appointment_action_map():
+    mapping = {}
+    if not APPOINTMENT_ACTIONS_FILE.exists():
+        return mapping
+
+    with zipfile.ZipFile(APPOINTMENT_ACTIONS_FILE, 'r') as z:
+        shared_strings = []
+        if 'xl/sharedStrings.xml' in z.namelist():
+            shared_xml = ET.fromstring(z.read('xl/sharedStrings.xml'))
+            ns = {'ns': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+            for si in shared_xml.findall('.//ns:si', ns):
+                shared_strings.append(''.join(t.text or '' for t in si.findall('.//ns:t', ns)))
+
+        sheet_xml = ET.fromstring(z.read('xl/worksheets/sheet1.xml'))
+        ns = {'ns': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+
+        for row in sheet_xml.findall('.//ns:row', ns):
+            cells = {}
+            for cell in row.findall('ns:c', ns):
+                ref = cell.attrib.get('r', '')
+                value_node = cell.find('ns:v', ns)
+                if value_node is None:
+                    continue
+                value = value_node.text or ''
+                if cell.attrib.get('t') == 's':
+                    try:
+                        value = shared_strings[int(value)]
+                    except Exception:
+                        pass
+                match = re.match(r'^([A-Z]+)', ref)
+                if match:
+                    cells[match.group(1)] = value.strip()
+
+            appointment_type = cells.get('B', '').strip()
+            action_text = cells.get('D', '').strip()
+            if appointment_type and action_text:
+                key = normalize_text(appointment_type)
+                mapping.setdefault(key, []).append(action_text)
+
+    for key, actions in mapping.items():
+        mapping[key] = list(dict.fromkeys(actions))
+    return mapping
+
+
+APPOINTMENT_ACTION_MAP = load_appointment_action_map()
+
+
+def classify_feedback(value: str) -> str:
+    if value is None:
+        return "neutral"
+
+    text = str(value).strip().lower()
+    normalized = " ".join(text.replace("-", " ").replace("_", " ").split())
+
+    unhappy_terms = ["unhappy", "un happy", "unh", "uh", "uhh", "u", "un-happy", "uh-h"]
+    happy_terms = ["happy", "h", "hp"]
+
+    has_unhappy = any(term in normalized for term in unhappy_terms)
+    has_happy = any(term in normalized for term in happy_terms)
+
+    if has_unhappy and not has_happy:
+        return "unhappy"
+    if has_happy and not has_unhappy:
+        return "happy"
+    if has_unhappy and has_happy:
+        unhappy_score = sum(1 for term in unhappy_terms if term in normalized)
+        happy_score = sum(1 for term in happy_terms if term in normalized)
+        return "unhappy" if unhappy_score >= happy_score else "happy"
+    return "neutral"
+
+
+def find_actions_for_appointment_type(appointment_type: str):
+    normalized = normalize_text(appointment_type)
+    if not normalized:
+        return []
+
+    if normalized in APPOINTMENT_ACTION_MAP:
+        return APPOINTMENT_ACTION_MAP[normalized]
+
+    for key, actions in APPOINTMENT_ACTION_MAP.items():
+        if key in normalized or normalized in key:
+            return actions
+
+    return []
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def get_clinic_columns(conn):
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(users)")
+    columns = [row['name'] for row in cursor.fetchall()]
+
+    preferred = []
+    for col in columns:
+        normalized = col.lower().replace(" ", "_").replace("-", "_")
+        if normalized in {"clinic", "final_clinic_name", "final_clinic", "unified_clinic"}:
+            preferred.append(col)
+
+    if preferred:
+        return preferred
+
+    for col in columns:
+        if "clinic" in col.lower() and "flow" not in col.lower():
+            preferred.append(col)
+
+    if preferred:
+        return preferred
+
+    for col in ["Region", "City"]:
+        if col in columns:
+            preferred.append(col)
+
+    return preferred or columns
+
+@app.get("/login", response_class=HTMLResponse)
+def get_login(request: Request):
+    if get_current_user(request):
+        return RedirectResponse(url='/', status_code=302)
+    return HTMLResponse(login_page())
+
+
+@app.post("/login")
+def post_login(request: Request, email: str = Form(...), password: str = Form(...)):
+    if password == VALID_USER_PASSWORD:
+        token = create_session(email.strip().lower())
+        response = RedirectResponse(url='/', status_code=302)
+        response.set_cookie(key=SESSION_COOKIE_NAME, value=token, httponly=True, path='/')
+        return response
+    return HTMLResponse(login_page("Invalid email or password."), status_code=401)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        SESSIONS.pop(token, None)
+    response = RedirectResponse(url='/login', status_code=302)
+    response.delete_cookie(SESSION_COOKIE_NAME, path='/')
+    return response
+
+
+@app.get("/api/session")
+def get_session(request: Request, current_user: str = Depends(require_auth)):
+    allowed_clinic = get_user_allowed_clinic(current_user)
+    display_name = USER_DISPLAY_NAMES.get(current_user.strip().lower(), current_user)
+    return {
+        "email": current_user,
+        "display_name": display_name,
+        "allowed_clinic": allowed_clinic,
+        "can_change_clinic": allowed_clinic is None,
+    }
+
+
+@app.get("/api/clinics")
+def get_clinics(request: Request, current_user: str = Depends(require_auth)):
+    allowed_clinic = get_user_allowed_clinic(current_user)
+    try:
+        if allowed_clinic:
+            return {"clinics": [allowed_clinic]}
+
+        conn = get_db_connection()
+        clinic_cols = get_clinic_columns(conn)
+
+        cursor = conn.cursor()
+        clinic_values = set(FIXED_CLINICS)
+        for clinic_col in clinic_cols:
+            cursor.execute(f'SELECT DISTINCT "{clinic_col}" FROM users WHERE "{clinic_col}" IS NOT NULL AND "{clinic_col}" != ""')
+            for row in cursor.fetchall():
+                value = row[0]
+                if value is not None and str(value).strip() != "":
+                    clinic_values.add(str(value))
+
+        clinics = sorted(clinic_values, key=lambda item: normalize_text(item))
+        conn.close()
+        return {"clinics": clinics}
+    except Exception as e:
+        return {"error": str(e), "clinics": []}
+
+@app.get("/api/feedbacks")
+def get_feedbacks(request: Request, current_user: str = Depends(require_auth)):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [row['name'] for row in cursor.fetchall()]
+        feedback_col = next((c for c in columns if 'feedback' in c.lower()), None)
+        
+        if feedback_col:
+            cursor.execute(f"SELECT DISTINCT \"{feedback_col}\" FROM users WHERE \"{feedback_col}\" IS NOT NULL AND \"{feedback_col}\" != '' ORDER BY \"{feedback_col}\"")
+            feedbacks = [row[0] for row in cursor.fetchall()]
+        else:
+            feedbacks = []
+        conn.close()
+        return {"feedbacks": feedbacks}
+    except Exception as e:
+        return {"error": str(e), "feedbacks": []}
+
+@app.get("/api/users")
+def search_users(request: Request, clinic: str = "", feedback: str = "", user_search: str = "", current_user: str = Depends(require_auth)):
+    allowed_clinic = get_user_allowed_clinic(current_user)
+    if allowed_clinic:
+        clinic = allowed_clinic
+
+    if not clinic and not user_search:
+        return {"users": []}
+        
+    try:
+        conn = get_db_connection()
+        clinic_cols = get_clinic_columns(conn)
+        
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(users)")
+        columns = [row['name'] for row in cursor.fetchall()]
+        feedback_col = next((c for c in columns if 'feedback' in c.lower()), None)
+        
+        name_cols = [c for c in columns if 'name' in c.lower() and 'clinic' not in c.lower() and 'pet' not in c.lower() and 'service' not in c.lower()]
+        id_cols = [c for c in columns if 'id' in c.lower() and 'ticket' not in c.lower()]
+        
+        query = "SELECT * FROM users WHERE 1=1"
+        params = []
+        
+        if clinic:
+            clinic_conditions = []
+            for clinic_col in clinic_cols:
+                clinic_conditions.append(f'LOWER(COALESCE("{clinic_col}", "")) = LOWER(?)')
+                params.append(clinic)
+            if clinic_conditions:
+                query += f" AND ({' OR '.join(clinic_conditions)})"
+            
+        if user_search:
+            search_conditions = []
+            for col in name_cols + id_cols:
+                search_conditions.append(f"\"{col}\" LIKE ?")
+                params.append(f"%{user_search}%")
+                
+            if search_conditions:
+                query += f" AND ({' OR '.join(search_conditions)})"
+            
+        cursor.execute(query, params)
+        users = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        if clinic:
+            target = normalize_text(clinic)
+            users = [row for row in users if any(normalize_text(row.get(col, "")) == target for col in clinic_cols)]
+
+        if feedback and feedback.lower() != "all":
+            filtered_users = []
+            for row in users:
+                feedback_values = []
+                for key, value in row.items():
+                    if key.lower().startswith("feedback") or key.lower().startswith("customer") or key.lower().startswith("rating"):
+                        if value is not None and str(value).strip() != "":
+                            feedback_values.append(str(value))
+
+                if not feedback_values:
+                    filtered_users.append(row)
+                    continue
+
+                combined = " ".join(feedback_values)
+                if classify_feedback(combined) == feedback.lower():
+                    filtered_users.append(row)
+            users = filtered_users
+
+        users.sort(key=lambda row: get_client_name(row))
+        return {"users": users}
+    except Exception as e:
+        return {"error": str(e), "users": []}
+
+@app.get("/api/actions")
+def get_actions(request: Request, appointment_type: str = "", current_user: str = Depends(require_auth)):
+    actions = find_actions_for_appointment_type(appointment_type)
+    return {"appointment_type": appointment_type, "actions": actions}
+
+
+@app.get("/api/sop")
+def get_sop_pdf(request: Request, current_user: str = Depends(require_auth)):
+    if SOP_FILE.exists():
+        # Return PDF with inline Content-Disposition so browsers render in-page
+        headers = {"Content-Disposition": f'inline; filename="{SOP_FILE.name}"'}
+        return FileResponse(SOP_FILE, media_type="application/pdf", headers=headers)
+    return {"error": "SOP PDF not found"}
+
+
+@app.get("/api/kra")
+def get_kra_pdf(request: Request, current_user: str = Depends(require_auth)):
+    if KRA_FILE.exists():
+        headers = {"Content-Disposition": f'inline; filename="{KRA_FILE.name}"'}
+        return FileResponse(KRA_FILE, media_type="application/pdf", headers=headers)
+    return {"error": "KRA PDF not found"}
+
+@app.get("/")
+def root(request: Request):
+    if get_current_user(request):
+        return RedirectResponse(url='/clinic-experience-dashboard.html', status_code=302)
+    return RedirectResponse(url='/login', status_code=302)
+
+@app.get("/clinic-experience-dashboard.html", response_class=HTMLResponse)
+def get_dashboard(request: Request):
+    if not get_current_user(request):
+        return RedirectResponse(url='/login', status_code=302)
+    try:
+        return HTML_FILE.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "Dashboard HTML file not found."
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
