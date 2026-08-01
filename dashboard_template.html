@@ -98,6 +98,8 @@
   .hbar-fill { height: 100%; border-radius: 4px; transition: filter 0.1s; }
   .hbar-row:hover .hbar-fill, .hbar-row:focus-visible .hbar-fill { filter: brightness(1.15); }
   .hbar-value { width: 34px; flex-shrink: 0; font-size: 11px; font-weight: 700; text-align: right; }
+  .hbar-name.wide { width: 168px; font-size: 10px; line-height: 1.25; }
+  .mini-note { font-size: 10.5px; color: var(--text-muted); margin-top: 6px; }
 
   /* sentiment bar */
   .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; cursor: pointer; }
@@ -228,6 +230,16 @@
       <div class="card-title">Reaction sentiment</div>
       <div id="chart-sentiment"></div>
       <div class="takeaway">91.8% positive · 2 negative rows flagged</div>
+    </div>
+    <div class="card">
+      <div class="card-title">SOP checklist compliance</div>
+      <div id="chart-compliance"></div>
+      <div class="takeaway" id="complianceTakeaway"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Concerns &amp; resolution</div>
+      <div id="chart-concerns"></div>
+      <div class="takeaway" id="concernsTakeaway">Every logged concern was resolved on the spot or ticketed — none left open. The one safety-flagged incident ("Pet got cut during the Grooming") wasn't escalated, while some minor issues (app glitch, wait time, hygiene feedback) were routed to the legal/social-threat escalation desk — worth a calibration check on when that escalation path gets used.</div>
     </div>
   </div>
 </div>
@@ -422,8 +434,28 @@
   const chartManagers = document.getElementById('chart-managers');
   const chartHours = document.getElementById('chart-hours');
   const chartSentiment = document.getElementById('chart-sentiment');
+  const chartCompliance = document.getElementById('chart-compliance');
+  const chartConcerns = document.getElementById('chart-concerns');
   const managerFilterEl = document.getElementById('managerFilter');
   const appointmentTypeFilterEl = document.getElementById('appointmentTypeFilter');
+
+  function headerIndex(name) { return HEADERS.indexOf(name); }
+  const arrivalGreetingIdx = HEADERS.reduce((acc, h, i) => h.startsWith('Arrival greeting') ? [...acc, i] : acc, []);
+  const COMPLIANCE_FIELDS = [
+    { label: 'Arrival greeting (OPD)', idx: arrivalGreetingIdx[0], type: 'OPD' },
+    { label: 'Pet engaged before consult (OPD)', idx: headerIndex('Pet engaged (pat / treat / comfort) before consult?'), type: 'OPD' },
+    { label: 'Reception loop closure confirmed (OPD)', idx: headerIndex('Reception loop closure confirmed before billing?'), type: 'OPD' },
+    { label: 'Screen Mirror & bill walked through (OPD)', idx: headerIndex('Screen Mirror shown and itemized bill walked through with PP before payment?'), type: 'OPD' },
+    { label: 'Arrival greeting (Grooming)', idx: arrivalGreetingIdx[1], type: 'Grooming' },
+    { label: 'Post-grooming satisfaction check (Grooming)', idx: headerIndex('Post-grooming satisfaction check conducted with PP?'), type: 'Grooming' },
+    { label: 'PP satisfied with grooming outcome', idx: headerIndex('PP satisfied with grooming outcome?'), type: 'Grooming' },
+    { label: 'Feedback solicited before PP left', idx: headerIndex('Feedback solicited before PP left premises?'), type: null },
+  ];
+  const ON_SPOT_CORRECTION_IDX = headerIndex('On-spot correction triggered?');
+  const CONCERN_RAISED_IDX = headerIndex('Did the PP raise any concern during this visit?');
+  const CONCERN_TYPE_IDX = headerIndex('Concern Type');
+  const RESOLUTION_STATUS_IDX = headerIndex('Resolution Status');
+  const ESCALATED_TO_IDX = headerIndex('Escalated To');
 
   const sentimentOrder = ['positive', 'neutral', 'negative'];
   const dailyDefs = [
@@ -613,6 +645,83 @@
     });
   }
 
+  // ===== SOP checklist compliance =====
+  function renderCompliance(data) {
+    chartCompliance.innerHTML = '';
+    const items = COMPLIANCE_FIELDS.map(f => {
+      const applicable = f.type ? data.filter(r => r.ap === f.type) : data;
+      const yesRows = applicable.filter(r => (r.f[f.idx] || '').trim().toLowerCase() === 'yes');
+      const exceptions = applicable.filter(r => (r.f[f.idx] || '').trim().toLowerCase() !== 'yes');
+      const pct = applicable.length ? Math.round(yesRows.length / applicable.length * 100) : null;
+      return { ...f, applicable, yesRows, exceptions, pct };
+    }).filter(item => item.pct !== null);
+
+    if (items.length === 0) {
+      chartCompliance.innerHTML = '<div class="empty-state">No entries in this selection.</div>';
+    } else {
+      items.forEach(item => {
+        const row = document.createElement('div'); row.className = 'hbar-row';
+        row.innerHTML = `
+          <div class="hbar-name wide">${item.label}</div>
+          <div class="hbar-track"><div class="hbar-fill" style="width:${item.pct}%; background:var(--seq-450)"></div></div>
+          <div class="hbar-value">${item.pct}%</div>
+        `;
+        const sub = item.exceptions.length
+          ? `${item.exceptions.length} of ${item.applicable.length} not marked Yes (blank or other) — showing those rows`
+          : `All ${item.applicable.length} applicable rows marked Yes`;
+        makeClickable(row, () => openDrawer(item.label, sub, item.exceptions.length ? item.exceptions : item.applicable));
+        chartCompliance.appendChild(row);
+      });
+    }
+
+    const correctionApplicable = data.filter(r => r.ap === 'Grooming');
+    const correctionCounts = { Yes: 0, No: 0, 'Not applicable': 0 };
+    correctionApplicable.forEach(r => {
+      const v = (r.f[ON_SPOT_CORRECTION_IDX] || '').trim();
+      if (v === 'Yes') correctionCounts.Yes++;
+      else if (v === 'No') correctionCounts.No++;
+      else if (v) correctionCounts['Not applicable']++;
+    });
+    const note = document.getElementById('complianceTakeaway');
+    note.textContent = `Most checklist items show 0% "No" ever recorded — a self-reported log by the same staff performing the task, not independent verification. On-spot correction triggered (Grooming): ${correctionCounts.Yes} Yes · ${correctionCounts.No} No · ${correctionCounts['Not applicable']} N/A — shown separately since "Yes" here likely means a fix was needed, not that service was flawless.`;
+  }
+
+  // ===== Concerns & resolution =====
+  function renderConcerns(data) {
+    chartConcerns.innerHTML = '';
+    const concernRows = data.filter(r => (r.f[CONCERN_RAISED_IDX] || '').trim().toLowerCase() === 'yes');
+    const typeCounts = {};
+    concernRows.forEach(r => {
+      const t = (r.f[CONCERN_TYPE_IDX] || 'Unspecified').trim() || 'Unspecified';
+      typeCounts[t] = (typeCounts[t] || 0) + 1;
+    });
+    const types = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
+
+    if (types.length === 0) {
+      chartConcerns.innerHTML = '<div class="empty-state">No concerns logged in this selection.</div>';
+      return;
+    }
+    const max = Math.max(...types.map(t => typeCounts[t]));
+    types.forEach(t => {
+      const row = document.createElement('div'); row.className = 'hbar-row';
+      row.innerHTML = `
+        <div class="hbar-name wide">${t}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${(typeCounts[t]/max)*100}%; background:var(--status-critical)"></div></div>
+        <div class="hbar-value">${typeCounts[t]}</div>
+      `;
+      makeClickable(row, () => openDrawer(`Concern: ${t}`, `${typeCounts[t]} of ${concernRows.length} concerns`, concernRows.filter(r => ((r.f[CONCERN_TYPE_IDX] || 'Unspecified').trim() || 'Unspecified') === t)));
+      chartConcerns.appendChild(row);
+    });
+
+    const resolved = concernRows.filter(r => (r.f[RESOLUTION_STATUS_IDX] || '').trim() === 'Resolved on the spot').length;
+    const ticketed = concernRows.filter(r => (r.f[RESOLUTION_STATUS_IDX] || '').trim() === 'Ticket Created').length;
+    const escalated = concernRows.filter(r => { const v = (r.f[ESCALATED_TO_IDX] || '').trim(); return v && v !== 'Not applicable'; }).length;
+    const noteEl = document.createElement('div');
+    noteEl.className = 'mini-note';
+    noteEl.textContent = `${concernRows.length} concerns of ${data.length} visits (${data.length ? Math.round(concernRows.length/data.length*100) : 0}%) · ${resolved} resolved on the spot · ${ticketed} ticketed · ${escalated} escalated`;
+    chartConcerns.appendChild(noteEl);
+  }
+
   function renderAll() {
     const data = getFilteredData();
     renderManagerFilter();
@@ -630,6 +739,8 @@
       hoursTakeaway.textContent = 'Peaks 12pm–4pm; quiet overnight · click a day above to filter this';
     }
     renderSentiment(data);
+    renderCompliance(data);
+    renderConcerns(data);
   }
 
   renderAll();
