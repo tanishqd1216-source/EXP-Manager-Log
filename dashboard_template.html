@@ -86,6 +86,7 @@
   .col-bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--seq-450); cursor: pointer; transition: filter 0.1s; min-height: 2px; }
   .col-bar:hover, .col-bar:focus-visible { filter: brightness(1.15); outline: none; }
   .col-bar.zero { background: var(--gridline); }
+  .col-bar.selected-day { box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--series-2); }
   .col-x { display: flex; gap: 3px; margin-top: 4px; }
   .col-x > div { flex: 1; text-align: center; font-size: 8.5px; color: var(--text-muted); min-width: 0; }
 
@@ -188,7 +189,7 @@
     <div class="card">
       <div class="card-title">Interaction time (4h blocks)</div>
       <div id="chart-hours"></div>
-      <div class="takeaway">Peaks 12pm–4pm; quiet overnight</div>
+      <div class="takeaway" id="hoursTakeaway">Peaks 12pm–4pm; quiet overnight · click a day above to filter this</div>
     </div>
     <div class="card">
       <div class="card-title">Reaction sentiment</div>
@@ -350,6 +351,7 @@
   const allAppointmentTypes = [...new Set(DATA.map(d => d.ap).filter(Boolean))].sort();
   let activeManager = null; // null = every manager (including the "Good" bad-data row)
   let activeAppointmentType = null; // null = every appointment type
+  let activeDailyBar = null; // ISO date of the day clicked in "Appointments over time", or null — scopes only the hours chart, no visible filter control
 
   function getFilteredData() {
     let data = DATA;
@@ -431,10 +433,14 @@
     dailyCounts.forEach(d => {
       const wrap = document.createElement('div'); wrap.className = 'col-bar-wrap';
       const bar = document.createElement('div');
-      bar.className = 'col-bar' + (d.value === 0 ? ' zero' : '');
+      bar.className = 'col-bar' + (d.value === 0 ? ' zero' : '') + (activeDailyBar === d.iso ? ' selected-day' : '');
       bar.style.height = Math.max((d.value / dailyMax) * 100, 3) + '%';
       bar.title = `${d.label}: ${d.value} entries`;
-      makeClickable(bar, () => openDrawer(d.label, `${d.value} entries logged on ${d.label}`, data.filter(x => x.i === d.iso)));
+      makeClickable(bar, () => {
+        activeDailyBar = (activeDailyBar === d.iso) ? null : d.iso;
+        renderAll();
+        openDrawer(d.label, `${d.value} entries logged on ${d.label}`, data.filter(x => x.i === d.iso));
+      });
       wrap.appendChild(bar);
       colWrap.appendChild(wrap);
       const lab = document.createElement('div'); lab.textContent = d.label.split(' ')[0];
@@ -520,7 +526,15 @@
     renderStats(data);
     renderDaily(data);
     renderManagers(data);
-    renderHours(data);
+    const hoursData = activeDailyBar ? data.filter(d => d.i === activeDailyBar) : data;
+    renderHours(hoursData);
+    const hoursTakeaway = document.getElementById('hoursTakeaway');
+    if (activeDailyBar) {
+      const dayLabel = (dailyDefs.find(([, iso]) => iso === activeDailyBar) || [activeDailyBar])[0];
+      hoursTakeaway.textContent = `Showing ${dayLabel} only (${hoursData.length} entries) · click that day again to clear`;
+    } else {
+      hoursTakeaway.textContent = 'Peaks 12pm–4pm; quiet overnight · click a day above to filter this';
+    }
     renderSentiment(data);
   }
 
