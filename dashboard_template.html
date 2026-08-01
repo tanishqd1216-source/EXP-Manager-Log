@@ -1,0 +1,504 @@
+<title>Experience Manager@Cx — Interactive Dashboard</title>
+<style>
+  .page-flex {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;
+    --series-2:       #eb6834;
+    --seq-450:        #2a78d6;
+    --status-good:     #0ca30c;
+    --status-warning:  #fab219;
+    --status-critical: #d03b3b;
+    --muted-fill:      #c3c2b7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .page-flex {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --page-plane: #0d0d0d; --text-primary:#fff;
+      --text-secondary:#c3c2b7; --text-muted:#898781; --gridline:#2c2c2a;
+      --baseline:#383835; --border: rgba(255,255,255,0.10);
+      --series-1:#3987e5; --series-2:#d95926; --seq-450:#3987e5;
+      --muted-fill:#55544f;
+    }
+  }
+  :root[data-theme="dark"] .page-flex {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --page-plane: #0d0d0d; --text-primary:#fff;
+    --text-secondary:#c3c2b7; --text-muted:#898781; --gridline:#2c2c2a;
+    --baseline:#383835; --border: rgba(255,255,255,0.10);
+    --series-1:#3987e5; --series-2:#d95926; --seq-450:#3987e5;
+    --muted-fill:#55544f;
+  }
+
+  * { box-sizing: border-box; }
+  .page-flex {
+    display: flex;
+    align-items: flex-start;
+    min-height: 100vh;
+    background: var(--page-plane);
+  }
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    padding: 18px 20px;
+    max-width: 1080px;
+    margin: 0 auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  h1 { font-size: 16px; font-weight: 700; margin: 0 0 2px; }
+  .sub { font-size: 11.5px; color: var(--text-muted); margin: 0 0 14px; }
+
+  .filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .filter-label { font-size: 10.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; margin-right: 2px; }
+
+  .stat-strip { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .stat {
+    flex: 1; min-width: 130px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; cursor: pointer; transition: filter 0.1s, transform 0.1s;
+  }
+  .stat:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  .stat:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+  .stat .label { font-size: 10.5px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 4px; }
+  .stat .value { font-size: 19px; font-weight: 700; line-height: 1.15; }
+  .stat .value.small { font-size: 14px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px 10px;
+  }
+  .card-title { font-size: 12px; font-weight: 700; margin: 0 0 8px; }
+  .takeaway { font-size: 10.5px; color: var(--text-muted); margin-top: 6px; }
+
+  /* column chart */
+  .col-chart { display: flex; align-items: flex-end; gap: 3px; height: 84px; border-bottom: 1px solid var(--baseline); }
+  .col-bar-wrap { flex: 1; height: 100%; display: flex; align-items: flex-end; min-width: 0; }
+  .col-bar { width: 100%; border-radius: 3px 3px 0 0; background: var(--seq-450); cursor: pointer; transition: filter 0.1s; min-height: 2px; }
+  .col-bar:hover, .col-bar:focus-visible { filter: brightness(1.15); outline: none; }
+  .col-bar.zero { background: var(--gridline); }
+  .col-x { display: flex; gap: 3px; margin-top: 4px; }
+  .col-x > div { flex: 1; text-align: center; font-size: 8.5px; color: var(--text-muted); min-width: 0; }
+
+  /* horizontal bar */
+  .hbar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; cursor: pointer; }
+  .hbar-name { width: 92px; flex-shrink: 0; font-size: 11px; font-weight: 600; }
+  .hbar-track { flex: 1; background: var(--gridline); border-radius: 4px; height: 16px; overflow: hidden; }
+  .hbar-fill { height: 100%; border-radius: 4px; transition: filter 0.1s; }
+  .hbar-row:hover .hbar-fill, .hbar-row:focus-visible .hbar-fill { filter: brightness(1.15); }
+  .hbar-value { width: 34px; flex-shrink: 0; font-size: 11px; font-weight: 700; text-align: right; }
+
+  /* sentiment bar */
+  .status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; cursor: pointer; }
+  .status-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0; }
+  .status-label { width: 52px; flex-shrink: 0; font-size: 11px; font-weight: 700; }
+  .status-track { flex: 1; background: var(--gridline); border-radius: 4px; height: 16px; overflow: hidden; }
+  .status-fill { height: 100%; transition: filter 0.1s; }
+  .status-row:hover .status-fill, .status-row:focus-visible .status-fill { filter: brightness(1.15); }
+  .status-pct { width: 40px; text-align: right; font-size: 11px; font-weight: 700; }
+
+  button.reset-btn {
+    font: inherit; font-size: 10px; font-weight: 700; color: var(--series-1);
+    background: none; border: none; cursor: pointer; padding: 0; margin-bottom: 6px;
+  }
+
+  /* drawer — pushes the dashboard aside instead of overlaying it */
+  #drawer {
+    width: 0;
+    flex-shrink: 0;
+    overflow: hidden;
+    align-self: stretch;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    background: var(--surface-1);
+    border-left: 1px solid var(--border);
+    transition: width 0.18s ease;
+  }
+  #drawer.open { width: 400px; }
+  .drawer-inner {
+    width: 400px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer-header { padding: 16px 18px 12px; border-bottom: 1px solid var(--gridline); flex-shrink: 0; }
+  .drawer-title { font-size: 14px; font-weight: 700; margin: 0 0 2px; padding-right: 30px; }
+  .drawer-sub { font-size: 11.5px; color: var(--text-muted); }
+  .drawer-close {
+    position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%;
+    border: none; background: var(--gridline); color: var(--text-primary); font-size: 14px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .drawer-pills { padding: 10px 18px; display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--gridline); flex-shrink: 0; }
+  .pill {
+    font-size: 10.5px; font-weight: 600; padding: 4px 10px; border-radius: 999px;
+    background: var(--page-plane); border: 1px solid var(--gridline); color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .pill.active { background: var(--series-1); color: #fff; border-color: var(--series-1); }
+  .drawer-list { overflow-y: auto; flex: 1; padding: 10px 18px 20px; }
+  .row-card { border-bottom: 1px solid var(--gridline); padding: 10px 0; }
+  .row-card:last-child { border-bottom: none; }
+  .row-meta { display: flex; gap: 8px; align-items: center; font-size: 10.5px; color: var(--text-muted); margin-bottom: 4px; flex-wrap: wrap; }
+  .row-badge { font-size: 9.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; color: #fff; }
+  .row-text { font-size: 12.5px; color: var(--text-primary); line-height: 1.4; }
+  .row-theme { font-size: 9.5px; color: var(--text-muted); margin-top: 3px; }
+  .row-flag { font-size: 10px; color: var(--status-critical); margin-top: 3px; font-weight: 600; }
+  .empty-state { font-size: 12.5px; color: var(--text-muted); padding: 20px 0; text-align: center; }
+
+  @media (max-width: 620px) {
+    .grid { grid-template-columns: 1fr; }
+    .stat { min-width: 45%; }
+    #drawer.open { width: 100vw; }
+    .drawer-inner { width: 100vw; }
+    .page-flex { position: relative; }
+    #drawer { position: fixed; top: 0; right: 0; z-index: 50; }
+  }
+</style>
+
+<div class="page-flex">
+<div class="viz-root">
+  <h1>Experience Manager@Cx — Interactive Dashboard</h1>
+  <p class="sub">Sheet tab gid=1293063869 · click any stat, bar, or segment to see the entries behind it</p>
+
+  <div class="filter-row" id="managerFilter"></div>
+  <div class="stat-strip" id="statStrip"></div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Appointments over time</div>
+      <div id="chart-daily"></div>
+      <div class="takeaway">Busiest 26 Jul (51) · gaps on 24 &amp; 31 Jul</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Interactions per manager</div>
+      <div id="chart-managers"></div>
+      <div class="takeaway">Hina handles 92% of volume; Bhawna started 1 Aug</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Interaction time (4h blocks)</div>
+      <div id="chart-hours"></div>
+      <div class="takeaway">Peaks 12pm–4pm; quiet overnight</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Reaction sentiment</div>
+      <div id="chart-sentiment"></div>
+      <div class="takeaway">91.8% positive · 2 negative rows flagged</div>
+    </div>
+  </div>
+</div>
+
+<div id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+<div class="drawer-inner">
+  <div class="drawer-header">
+    <button class="drawer-close" id="drawerClose" aria-label="Close">✕</button>
+    <div class="drawer-title" id="drawerTitle"></div>
+    <div class="drawer-sub" id="drawerSub"></div>
+  </div>
+  <div class="drawer-pills" id="drawerPills"></div>
+  <div class="drawer-list" id="drawerList"></div>
+</div>
+</div>
+</div>
+
+<script>
+(function () {
+  const DATA = __DATA_PLACEHOLDER__;
+
+  const root = document.querySelector('.viz-root');
+  const drawer = document.getElementById('drawer');
+  const drawerTitle = document.getElementById('drawerTitle');
+  const drawerSub = document.getElementById('drawerSub');
+  const drawerPills = document.getElementById('drawerPills');
+  const drawerList = document.getElementById('drawerList');
+
+  let currentRows = [];
+  let currentThemeFilter = null;
+
+  const sentimentColor = { positive: 'var(--status-good)', neutral: 'var(--status-warning)', negative: 'var(--status-critical)' };
+  const sentimentIcon = { positive: '✓', neutral: '~', negative: '✕' };
+
+  function openDrawer(title, sub, rows) {
+    currentRows = rows;
+    currentThemeFilter = null;
+    drawerTitle.textContent = title;
+    drawerSub.textContent = sub;
+    renderPills();
+    renderList();
+    drawer.classList.add('open');
+    document.addEventListener('keydown', onKeydown);
+  }
+  function closeDrawer() {
+    drawer.classList.remove('open');
+    document.removeEventListener('keydown', onKeydown);
+  }
+  function onKeydown(e) { if (e.key === 'Escape') closeDrawer(); }
+  document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+
+  function renderPills() {
+    const themeCounts = {};
+    currentRows.forEach(r => { themeCounts[r.th] = (themeCounts[r.th] || 0) + 1; });
+    const themes = Object.keys(themeCounts).sort((a, b) => themeCounts[b] - themeCounts[a]);
+    drawerPills.innerHTML = '';
+    if (themes.length <= 1) { drawerPills.style.display = 'none'; return; }
+    drawerPills.style.display = 'flex';
+    const allPill = document.createElement('div');
+    allPill.className = 'pill active';
+    allPill.textContent = `All (${currentRows.length})`;
+    allPill.onclick = () => { currentThemeFilter = null; renderPills(); renderList(); };
+    drawerPills.appendChild(allPill);
+    themes.forEach(th => {
+      const p = document.createElement('div');
+      p.className = 'pill' + (currentThemeFilter === th ? ' active' : '');
+      p.textContent = `${th} (${themeCounts[th]})`;
+      p.onclick = () => { currentThemeFilter = th; renderPills(); renderList(); };
+      drawerPills.appendChild(p);
+    });
+    if (currentThemeFilter) { allPill.classList.remove('active'); }
+  }
+
+  function renderList() {
+    const rows = currentThemeFilter ? currentRows.filter(r => r.th === currentThemeFilter) : currentRows;
+    drawerList.innerHTML = '';
+    if (rows.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.textContent = 'No entries logged for this selection.';
+      drawerList.appendChild(empty);
+      return;
+    }
+    rows.forEach(r => {
+      const card = document.createElement('div');
+      card.className = 'row-card';
+
+      const meta = document.createElement('div');
+      meta.className = 'row-meta';
+      const dateSpan = document.createElement('span'); dateSpan.textContent = r.d;
+      const timeSpan = document.createElement('span'); timeSpan.textContent = r.t;
+      const mgrSpan = document.createElement('span'); mgrSpan.textContent = r.m;
+      const badge = document.createElement('span');
+      badge.className = 'row-badge';
+      badge.style.background = sentimentColor[r.s];
+      badge.textContent = `${sentimentIcon[r.s]} ${r.s}`;
+      meta.appendChild(dateSpan); meta.appendChild(timeSpan); meta.appendChild(mgrSpan); meta.appendChild(badge);
+
+      const text = document.createElement('div');
+      text.className = 'row-text';
+      text.textContent = r.v || '(blank)';
+
+      const theme = document.createElement('div');
+      theme.className = 'row-theme';
+      theme.textContent = r.th;
+
+      card.appendChild(meta);
+      card.appendChild(text);
+      card.appendChild(theme);
+
+      if (r.a) {
+        const flag = document.createElement('div');
+        flag.className = 'row-flag';
+        flag.textContent = '⚠ ' + r.ar;
+        card.appendChild(flag);
+      }
+      drawerList.appendChild(card);
+    });
+  }
+
+  function makeClickable(el, handler) {
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('role', 'button');
+    el.addEventListener('click', handler);
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(); } });
+  }
+
+  // ===== Shared setup =====
+  const statStrip = document.getElementById('statStrip');
+  const chartDaily = document.getElementById('chart-daily');
+  const chartManagers = document.getElementById('chart-managers');
+  const chartHours = document.getElementById('chart-hours');
+  const chartSentiment = document.getElementById('chart-sentiment');
+  const managerFilterEl = document.getElementById('managerFilter');
+
+  const sentimentOrder = ['positive', 'neutral', 'negative'];
+  const dailyDefs = [
+    ['22 Jul','2026-07-22'],['23 Jul','2026-07-23'],['24 Jul','2026-07-24'],['25 Jul','2026-07-25'],
+    ['26 Jul','2026-07-26'],['27 Jul','2026-07-27'],['28 Jul','2026-07-28'],['29 Jul','2026-07-29'],
+    ['30 Jul','2026-07-30'],['31 Jul','2026-07-31'],['1 Aug','2026-08-01'],
+  ];
+  const bucketDefs = [
+    ['12–4am', 0, 4], ['4–8am', 4, 8], ['8am–12pm', 8, 12],
+    ['12–4pm', 12, 16], ['4–8pm', 16, 20], ['8pm–12am', 20, 24],
+  ];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function formatIsoShort(iso) {
+    const [y, m, day] = iso.split('-');
+    return `${parseInt(day, 10)} ${monthNames[parseInt(m, 10) - 1]}`;
+  }
+
+  const allManagers = [...new Set(DATA.filter(d => d.m !== 'Good').map(d => d.m))].sort();
+  let activeManager = null; // null = every manager (including the "Good" bad-data row)
+
+  function getFilteredData() {
+    return activeManager ? DATA.filter(d => d.m === activeManager) : DATA;
+  }
+
+  // ===== Manager filter row — scopes every stat/chart/drawer below it =====
+  function renderManagerFilter() {
+    managerFilterEl.innerHTML = '';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'filter-label';
+    labelEl.textContent = 'Manager:';
+    managerFilterEl.appendChild(labelEl);
+    const makePill = (label, value) => {
+      const p = document.createElement('div');
+      p.className = 'pill' + (activeManager === value ? ' active' : '');
+      p.textContent = label;
+      makeClickable(p, () => { activeManager = value; renderAll(); });
+      managerFilterEl.appendChild(p);
+    };
+    makePill('All managers', null);
+    allManagers.forEach(m => makePill(m, m));
+  }
+
+  // ===== Stat strip =====
+  function renderStats(data) {
+    statStrip.innerHTML = '';
+    const total = data.length;
+    const dates = data.map(d => d.i).filter(Boolean).sort();
+    const managersInView = [...new Set(data.filter(d => d.m !== 'Good').map(d => d.m))];
+    const captured = data.filter(d => d.v && d.v.trim() !== '').length;
+    const sentCounts = {};
+    data.forEach(d => { sentCounts[d.s] = (sentCounts[d.s] || 0) + 1; });
+    const dominant = total ? Object.keys(sentCounts).sort((a, b) => sentCounts[b] - sentCounts[a])[0] : null;
+    const rangeLabel = total ? (dates[0] === dates[dates.length-1] ? formatIsoShort(dates[0]) : `${formatIsoShort(dates[0])} – ${formatIsoShort(dates[dates.length-1])}`) : '—';
+
+    const stats = [
+      { label: 'Total entries', value: total, onClick: () => openDrawer('All entries', `${total} rows, chronological`, data.slice().sort((a,b)=>(a.i||'').localeCompare(b.i||''))) },
+      { label: 'Date range', value: rangeLabel, small: true, onClick: () => openDrawer('All entries by date', total ? `${dates[0]} to ${dates[dates.length-1]}` : 'No entries in this selection', data.slice().sort((a,b)=>(a.i||'').localeCompare(b.i||''))) },
+      { label: '# Managers', value: managersInView.length, onClick: () => openDrawer('Entries by manager', `${managersInView.length} manager(s) in this selection`, data.slice().sort((a,b)=> a.m.localeCompare(b.m))) },
+      { label: '% Captured', value: total ? Math.round(captured/total*100) + '%' : '—', onClick: () => openDrawer('Captured reactions', `${captured} of ${total} rows have text — ambiguous ones surfaced via the flag`, data.slice().sort((a,b)=> (b.a - a.a))) },
+      { label: 'Dominant sentiment', value: dominant ? dominant.charAt(0).toUpperCase()+dominant.slice(1) : '—', small: true, onClick: () => { if (dominant) openDrawer(`${dominant.charAt(0).toUpperCase()+dominant.slice(1)} reactions`, `${sentCounts[dominant]} of ${total} rows (${Math.round(sentCounts[dominant]/total*100)}%)`, data.filter(d => d.s === dominant)); } },
+    ];
+    stats.forEach(s => {
+      const el = document.createElement('div');
+      el.className = 'stat';
+      el.innerHTML = `<div class="label">${s.label}</div><div class="value${s.small ? ' small' : ''}">${s.value}</div>`;
+      makeClickable(el, s.onClick);
+      statStrip.appendChild(el);
+    });
+  }
+
+  // ===== Daily column chart =====
+  function renderDaily(data) {
+    chartDaily.innerHTML = '';
+    const dailyCounts = dailyDefs.map(([label, iso]) => ({ label, iso, value: data.filter(d => d.i === iso).length }));
+    const dailyMax = Math.max(...dailyCounts.map(d => d.value), 1);
+    const colWrap = document.createElement('div'); colWrap.className = 'col-chart';
+    const colX = document.createElement('div'); colX.className = 'col-x';
+    dailyCounts.forEach(d => {
+      const wrap = document.createElement('div'); wrap.className = 'col-bar-wrap';
+      const bar = document.createElement('div');
+      bar.className = 'col-bar' + (d.value === 0 ? ' zero' : '');
+      bar.style.height = Math.max((d.value / dailyMax) * 100, 3) + '%';
+      bar.title = `${d.label}: ${d.value} entries`;
+      makeClickable(bar, () => openDrawer(d.label, `${d.value} entries logged on ${d.label}`, data.filter(x => x.i === d.iso)));
+      wrap.appendChild(bar);
+      colWrap.appendChild(wrap);
+      const lab = document.createElement('div'); lab.textContent = d.label.split(' ')[0];
+      colX.appendChild(lab);
+    });
+    chartDaily.appendChild(colWrap); chartDaily.appendChild(colX);
+  }
+
+  // ===== Manager bar chart =====
+  function renderManagers(data) {
+    chartManagers.innerHTML = '';
+    const managerCounts = {};
+    data.forEach(d => { managerCounts[d.m] = (managerCounts[d.m] || 0) + 1; });
+    const managerListLocal = Object.keys(managerCounts).sort((a, b) => managerCounts[b] - managerCounts[a]);
+    if (managerListLocal.length === 0) {
+      chartManagers.innerHTML = '<div class="empty-state">No entries in this selection.</div>';
+      return;
+    }
+    const mgrMax = Math.max(...Object.values(managerCounts));
+    const realOrder = managerListLocal.filter(x => x !== 'Good');
+    managerListLocal.forEach(m => {
+      const isBad = m === 'Good';
+      const row = document.createElement('div'); row.className = 'hbar-row';
+      row.innerHTML = `
+        <div class="hbar-name">${isBad ? '"Good" (bad data)' : m}</div>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${(managerCounts[m]/mgrMax)*100}%; background:${isBad ? 'var(--muted-fill)' : (m === realOrder[0] ? 'var(--series-1)' : 'var(--series-2)')}"></div></div>
+        <div class="hbar-value">${managerCounts[m]}</div>
+      `;
+      makeClickable(row, () => openDrawer(isBad ? '"Good" (bad data)' : m, isBad ? `${managerCounts[m]} row — a data-entry mistake, not a real manager` : `${managerCounts[m]} interactions`, data.filter(x => x.m === m)));
+      chartManagers.appendChild(row);
+    });
+  }
+
+  // ===== Hour buckets =====
+  function renderHours(data) {
+    chartHours.innerHTML = '';
+    const bucketCounts = bucketDefs.map(([label, lo, hi]) => ({
+      label, lo, hi, value: data.filter(d => d.h !== null && d.h >= lo && d.h < hi).length
+    }));
+    const bucketMax = Math.max(...bucketCounts.map(d => d.value), 1);
+    const hColWrap = document.createElement('div'); hColWrap.className = 'col-chart';
+    const hColX = document.createElement('div'); hColX.className = 'col-x';
+    bucketCounts.forEach(b => {
+      const wrap = document.createElement('div'); wrap.className = 'col-bar-wrap';
+      const bar = document.createElement('div');
+      bar.className = 'col-bar' + (b.value === 0 ? ' zero' : '');
+      bar.style.height = Math.max((b.value / bucketMax) * 100, 3) + '%';
+      bar.title = `${b.label}: ${b.value} entries`;
+      makeClickable(bar, () => openDrawer(b.label, `${b.value} entries in this window`, data.filter(x => x.h !== null && x.h >= b.lo && x.h < b.hi)));
+      wrap.appendChild(bar);
+      hColWrap.appendChild(wrap);
+      const lab = document.createElement('div'); lab.textContent = b.label;
+      hColX.appendChild(lab);
+    });
+    chartHours.appendChild(hColWrap); chartHours.appendChild(hColX);
+  }
+
+  // ===== Sentiment chart =====
+  function renderSentiment(data) {
+    chartSentiment.innerHTML = '';
+    const total = data.length;
+    const sentCounts = {};
+    data.forEach(d => { sentCounts[d.s] = (sentCounts[d.s] || 0) + 1; });
+    sentimentOrder.forEach(s => {
+      const count = sentCounts[s] || 0;
+      const pct = total ? Math.round(count/total*100) : 0;
+      const row = document.createElement('div'); row.className = 'status-row';
+      row.innerHTML = `
+        <div class="status-icon" style="background:${sentimentColor[s]}">${sentimentIcon[s]}</div>
+        <div class="status-label">${s.charAt(0).toUpperCase()+s.slice(1)}</div>
+        <div class="status-track"><div class="status-fill" style="width:${pct}%; background:${sentimentColor[s]}"></div></div>
+        <div class="status-pct">${pct}%</div>
+      `;
+      makeClickable(row, () => openDrawer(`${s.charAt(0).toUpperCase()+s.slice(1)} reactions`, `${count} of ${total} rows${total ? ' (' + pct + '%)' : ''}`, data.filter(d => d.s === s)));
+      chartSentiment.appendChild(row);
+    });
+  }
+
+  function renderAll() {
+    const data = getFilteredData();
+    renderManagerFilter();
+    renderStats(data);
+    renderDaily(data);
+    renderManagers(data);
+    renderHours(data);
+    renderSentiment(data);
+  }
+
+  renderAll();
+})();
+</script>
