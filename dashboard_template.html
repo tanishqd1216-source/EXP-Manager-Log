@@ -17,6 +17,7 @@
     --status-warning:  #fab219;
     --status-critical: #d03b3b;
     --muted-fill:      #c3c2b7;
+    --overlay:         rgba(11,11,11,0.45);
   }
   @media (prefers-color-scheme: dark) {
     :root:where(:not([data-theme="light"])) .page-flex {
@@ -25,7 +26,7 @@
       --text-secondary:#c3c2b7; --text-muted:#898781; --gridline:#2c2c2a;
       --baseline:#383835; --border: rgba(255,255,255,0.10);
       --series-1:#3987e5; --series-2:#d95926; --seq-450:#3987e5;
-      --muted-fill:#55544f;
+      --muted-fill:#55544f; --overlay: rgba(0,0,0,0.6);
     }
   }
   :root[data-theme="dark"] .page-flex {
@@ -34,7 +35,7 @@
     --text-secondary:#c3c2b7; --text-muted:#898781; --gridline:#2c2c2a;
     --baseline:#383835; --border: rgba(255,255,255,0.10);
     --series-1:#3987e5; --series-2:#d95926; --seq-450:#3987e5;
-    --muted-fill:#55544f;
+    --muted-fill:#55544f; --overlay: rgba(0,0,0,0.6);
   }
 
   * { box-sizing: border-box; }
@@ -159,14 +160,35 @@
   .row-hint { font-size: 10px; color: var(--series-1); margin-top: 4px; font-weight: 600; }
   .empty-state { font-size: 12.5px; color: var(--text-muted); padding: 20px 0; text-align: center; }
 
-  .detail-back { display: inline-block; margin-bottom: 12px; }
-  .detail-heading { font-size: 13px; font-weight: 700; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--gridline); }
   .detail-field { margin-bottom: 10px; }
   .detail-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 2px; }
   .detail-value { font-size: 12.5px; color: var(--text-primary); line-height: 1.4; word-break: break-word; }
   .detail-value.yes { color: var(--status-good); font-weight: 700; }
   .detail-value.no { color: var(--status-critical); font-weight: 700; }
   .detail-value.empty { color: var(--text-muted); font-style: italic; }
+
+  /* Record detail popup — separate from the drawer, its own overlay */
+  #recordModalOverlay {
+    position: fixed; inset: 0; background: var(--overlay); opacity: 0; pointer-events: none;
+    transition: opacity 0.15s; z-index: 1000;
+  }
+  #recordModalOverlay.open { opacity: 1; pointer-events: auto; }
+  #recordModal {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -48%);
+    width: 480px; max-width: 90vw; max-height: 80vh;
+    background: var(--surface-1); border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    z-index: 1001; opacity: 0; pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #recordModal.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  .record-modal-header {
+    padding: 16px 18px; border-bottom: 1px solid var(--gridline);
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  .record-modal-title { font-size: 13.5px; font-weight: 700; padding-right: 12px; }
+  .record-modal-body { overflow-y: auto; padding: 14px 18px 20px; flex: 1; }
 
   @media (max-width: 620px) {
     .grid { grid-template-columns: 1fr; }
@@ -223,6 +245,15 @@
 </div>
 </div>
 
+<div id="recordModalOverlay"></div>
+<div id="recordModal" role="dialog" aria-modal="true" aria-labelledby="recordModalTitle">
+  <div class="record-modal-header">
+    <div class="record-modal-title" id="recordModalTitle"></div>
+    <button class="drawer-close" id="recordModalClose" aria-label="Close">✕</button>
+  </div>
+  <div class="record-modal-body" id="recordModalBody"></div>
+</div>
+
 <script>
 (function () {
   const HEADERS = __HEADERS_PLACEHOLDER__;
@@ -234,10 +265,13 @@
   const drawerSub = document.getElementById('drawerSub');
   const drawerPills = document.getElementById('drawerPills');
   const drawerList = document.getElementById('drawerList');
+  const recordModalOverlay = document.getElementById('recordModalOverlay');
+  const recordModal = document.getElementById('recordModal');
+  const recordModalTitle = document.getElementById('recordModalTitle');
+  const recordModalBody = document.getElementById('recordModalBody');
 
   let currentRows = [];
   let currentThemeFilter = null;
-  let detailRow = null;
 
   const sentimentColor = { positive: 'var(--status-good)', neutral: 'var(--status-warning)', negative: 'var(--status-critical)' };
   const sentimentIcon = { positive: '✓', neutral: '~', negative: '✕' };
@@ -245,7 +279,6 @@
   function openDrawer(title, sub, rows) {
     currentRows = rows;
     currentThemeFilter = null;
-    detailRow = null;
     drawerTitle.textContent = title;
     drawerSub.textContent = sub;
     renderPills();
@@ -257,8 +290,14 @@
     drawer.classList.remove('open');
     document.removeEventListener('keydown', onKeydown);
   }
-  function onKeydown(e) { if (e.key === 'Escape') closeDrawer(); }
+  function onKeydown(e) {
+    if (e.key !== 'Escape') return;
+    if (recordModal.classList.contains('open')) { closeRecordModal(); return; }
+    closeDrawer();
+  }
   document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+  document.getElementById('recordModalClose').addEventListener('click', closeRecordModal);
+  recordModalOverlay.addEventListener('click', closeRecordModal);
 
   function renderPills() {
     const themeCounts = {};
@@ -330,7 +369,7 @@
       hint.textContent = 'Click for full details →';
       card.appendChild(hint);
 
-      makeClickable(card, () => openRowDetail(r));
+      makeClickable(card, () => openRecordModal(r));
       drawerList.appendChild(card);
     });
   }
@@ -342,22 +381,9 @@
     return '';
   }
 
-  function openRowDetail(row) {
-    detailRow = row;
-    drawerPills.style.display = 'none';
-    drawerList.innerHTML = '';
-
-    const backBtn = document.createElement('div');
-    backBtn.className = 'pill detail-back';
-    backBtn.textContent = '← Back to list';
-    makeClickable(backBtn, () => closeRowDetail());
-    drawerList.appendChild(backBtn);
-
-    const heading = document.createElement('div');
-    heading.className = 'detail-heading';
-    heading.textContent = `${row.m} · ${row.d} ${row.t}`;
-    drawerList.appendChild(heading);
-
+  function openRecordModal(row) {
+    recordModalTitle.textContent = `${row.m} · ${row.d} ${row.t}`;
+    recordModalBody.innerHTML = '';
     HEADERS.forEach((header, i) => {
       const value = row.f[i];
       const hasValue = value !== null && value !== undefined && String(value).trim() !== '';
@@ -372,14 +398,15 @@
       val.textContent = hasValue ? value : 'Not provided';
       field.appendChild(label);
       field.appendChild(val);
-      drawerList.appendChild(field);
+      recordModalBody.appendChild(field);
     });
+    recordModalOverlay.classList.add('open');
+    recordModal.classList.add('open');
   }
 
-  function closeRowDetail() {
-    detailRow = null;
-    renderPills();
-    renderList();
+  function closeRecordModal() {
+    recordModalOverlay.classList.remove('open');
+    recordModal.classList.remove('open');
   }
 
   function makeClickable(el, handler) {
