@@ -241,6 +241,11 @@
       <div id="chart-concerns"></div>
       <div class="takeaway" id="concernsTakeaway">Every logged concern was resolved on the spot or ticketed — none left open. The one safety-flagged incident ("Pet got cut during the Grooming") wasn't escalated, while some minor issues (app glitch, wait time, hygiene feedback) were routed to the legal/social-threat escalation desk — worth a calibration check on when that escalation path gets used.</div>
     </div>
+    <div class="card">
+      <div class="card-title">Performance: negative feedback rate</div>
+      <div id="chart-negative"></div>
+      <div class="takeaway" id="negativeTakeaway"></div>
+    </div>
   </div>
 </div>
 
@@ -436,6 +441,7 @@
   const chartSentiment = document.getElementById('chart-sentiment');
   const chartCompliance = document.getElementById('chart-compliance');
   const chartConcerns = document.getElementById('chart-concerns');
+  const chartNegative = document.getElementById('chart-negative');
   const managerFilterEl = document.getElementById('managerFilter');
   const appointmentTypeFilterEl = document.getElementById('appointmentTypeFilter');
 
@@ -456,6 +462,15 @@
   const CONCERN_TYPE_IDX = headerIndex('Concern Type');
   const RESOLUTION_STATUS_IDX = headerIndex('Resolution Status');
   const ESCALATED_TO_IDX = headerIndex('Escalated To');
+  const FLAG_FIELD_IDX = headerIndex('Anything else worth flagging (hygiene, staffing, systems, other)');
+  const FLAG_KEYWORDS = ['concern', 'issue', 'problem', 'not working', 'complaint', 'raised', 'rusty', 'not clean'];
+
+  function isNegativeSignal(row) {
+    if (row.s === 'negative') return true;
+    if (row.s === 'neutral' && row.th !== 'General satisfaction' && row.th !== 'Verbal-only (no detail)') return true;
+    const flagVal = (row.f[FLAG_FIELD_IDX] || '').trim().toLowerCase();
+    return FLAG_KEYWORDS.some(k => flagVal.includes(k));
+  }
 
   const sentimentOrder = ['positive', 'neutral', 'negative'];
   const dailyDefs = [
@@ -722,6 +737,44 @@
     chartConcerns.appendChild(noteEl);
   }
 
+  // ===== Performance: negative feedback by manager =====
+  // Combines verbal-reaction sentiment/theme with real (non-boilerplate) entries
+  // in "Anything else worth flagging" into one negative-signal-per-visit flag.
+  function renderNegativeFeedback(data) {
+    chartNegative.innerHTML = '';
+    const managerStats = {};
+    data.forEach(r => {
+      if (r.m === 'Good') return;
+      if (!managerStats[r.m]) managerStats[r.m] = { total: 0, negative: 0 };
+      managerStats[r.m].total++;
+      if (isNegativeSignal(r)) managerStats[r.m].negative++;
+    });
+    const managers = Object.keys(managerStats).sort((a, b) =>
+      (managerStats[b].negative / managerStats[b].total) - (managerStats[a].negative / managerStats[a].total)
+    );
+
+    if (managers.length === 0) {
+      chartNegative.innerHTML = '<div class="empty-state">No entries in this selection.</div>';
+    } else {
+      managers.forEach(m => {
+        const c = managerStats[m];
+        const rate = c.total ? Math.round(c.negative / c.total * 100) : 0;
+        const row = document.createElement('div'); row.className = 'hbar-row';
+        row.innerHTML = `
+          <div class="hbar-name">${m}</div>
+          <div class="hbar-track"><div class="hbar-fill" style="width:${rate}%; background:var(--status-critical)"></div></div>
+          <div class="hbar-value">${rate}%</div>
+        `;
+        makeClickable(row, () => openDrawer(`${m} — negative feedback`, `${c.negative} of ${c.total} visits (${rate}%) show a negative/friction signal`, data.filter(r => r.m === m && isNegativeSignal(r))));
+        chartNegative.appendChild(row);
+      });
+    }
+
+    const totalNeg = data.filter(isNegativeSignal).length;
+    const note = document.getElementById('negativeTakeaway');
+    note.textContent = `${totalNeg} of ${data.length} visits (${data.length ? Math.round(totalNeg / data.length * 100) : 0}%) show a negative signal — negative sentiment, a friction theme (waiting time, hygiene, grooming quality, etc.), or a real note in "anything else flagged" (excludes boilerplate "Good"/"Ok"/"No" filler). Rates, not raw counts, since Hina and Bhawna have very different visit volumes.`;
+  }
+
   function renderAll() {
     const data = getFilteredData();
     renderManagerFilter();
@@ -741,6 +794,7 @@
     renderSentiment(data);
     renderCompliance(data);
     renderConcerns(data);
+    renderNegativeFeedback(data);
   }
 
   renderAll();
