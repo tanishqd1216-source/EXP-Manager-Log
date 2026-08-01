@@ -172,6 +172,8 @@
   <p class="sub">Sheet tab gid=1293063869 · click any stat, bar, or segment to see the entries behind it</p>
 
   <div class="filter-row" id="managerFilter"></div>
+  <div class="filter-row" id="dayFilter"></div>
+  <div class="filter-row" id="appointmentTypeFilter"></div>
   <div class="stat-strip" id="statStrip"></div>
   <div class="grid">
     <div class="card">
@@ -327,6 +329,8 @@
   const chartHours = document.getElementById('chart-hours');
   const chartSentiment = document.getElementById('chart-sentiment');
   const managerFilterEl = document.getElementById('managerFilter');
+  const dayFilterEl = document.getElementById('dayFilter');
+  const appointmentTypeFilterEl = document.getElementById('appointmentTypeFilter');
 
   const sentimentOrder = ['positive', 'neutral', 'negative'];
   const dailyDefs = [
@@ -345,28 +349,62 @@
   }
 
   const allManagers = [...new Set(DATA.filter(d => d.m !== 'Good').map(d => d.m))].sort();
+  const allAppointmentTypes = [...new Set(DATA.map(d => d.ap).filter(Boolean))].sort();
   let activeManager = null; // null = every manager (including the "Good" bad-data row)
+  let activeDay = null; // null = every day; otherwise an ISO date string
+  let activeAppointmentType = null; // null = every appointment type
 
   function getFilteredData() {
-    return activeManager ? DATA.filter(d => d.m === activeManager) : DATA;
+    let data = DATA;
+    if (activeManager) data = data.filter(d => d.m === activeManager);
+    if (activeDay) data = data.filter(d => d.i === activeDay);
+    if (activeAppointmentType) data = data.filter(d => d.ap === activeAppointmentType);
+    return data;
+  }
+
+  function renderPillFilter(container, label, options, activeValue, onSelect) {
+    container.innerHTML = '';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'filter-label';
+    labelEl.textContent = label;
+    container.appendChild(labelEl);
+    options.forEach(([optLabel, value]) => {
+      const p = document.createElement('div');
+      p.className = 'pill' + (activeValue === value ? ' active' : '');
+      p.textContent = optLabel;
+      makeClickable(p, () => onSelect(value));
+      container.appendChild(p);
+    });
   }
 
   // ===== Manager filter row — scopes every stat/chart/drawer below it =====
   function renderManagerFilter() {
-    managerFilterEl.innerHTML = '';
-    const labelEl = document.createElement('div');
-    labelEl.className = 'filter-label';
-    labelEl.textContent = 'Manager:';
-    managerFilterEl.appendChild(labelEl);
-    const makePill = (label, value) => {
-      const p = document.createElement('div');
-      p.className = 'pill' + (activeManager === value ? ' active' : '');
-      p.textContent = label;
-      makeClickable(p, () => { activeManager = value; renderAll(); });
-      managerFilterEl.appendChild(p);
-    };
-    makePill('All managers', null);
-    allManagers.forEach(m => makePill(m, m));
+    renderPillFilter(
+      managerFilterEl, 'Manager:',
+      [['All managers', null], ...allManagers.map(m => [m, m])],
+      activeManager,
+      (value) => { activeManager = value; renderAll(); }
+    );
+  }
+
+  // ===== Day filter row =====
+  function renderDayFilter() {
+    renderPillFilter(
+      dayFilterEl, 'Day:',
+      [['All days', null], ...dailyDefs.map(([label, iso]) => [label, iso])],
+      activeDay,
+      (value) => { activeDay = value; renderAll(); }
+    );
+  }
+
+  // ===== Appointment type filter row =====
+  function renderAppointmentTypeFilter() {
+    renderPillFilter(
+      appointmentTypeFilterEl, 'Appointment type:',
+      [['All types', null], ...allAppointmentTypes.map(t => [t, t])],
+      activeAppointmentType,
+      (value) => { activeAppointmentType = value; renderAll(); }
+    );
   }
 
   // ===== Stat strip =====
@@ -492,6 +530,8 @@
   function renderAll() {
     const data = getFilteredData();
     renderManagerFilter();
+    renderDayFilter();
+    renderAppointmentTypeFilter();
     renderStats(data);
     renderDaily(data);
     renderManagers(data);
