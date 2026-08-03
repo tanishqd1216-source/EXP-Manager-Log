@@ -48,3 +48,7 @@ Thumbs.db
 
 # Secrets
 credentials
+ngrok-secondaccount.yml
+
+# Claude Code local config
+.claude/
