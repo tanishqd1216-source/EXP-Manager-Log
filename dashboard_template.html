@@ -209,6 +209,7 @@
 
   <div class="filter-row" id="managerFilter"></div>
   <div class="filter-row" id="appointmentTypeFilter"></div>
+  <div class="filter-row" id="dateFilter"></div>
   <div class="stat-strip" id="statStrip"></div>
   <div class="grid">
     <div class="card">
@@ -444,6 +445,7 @@
   const chartNegative = document.getElementById('chart-negative');
   const managerFilterEl = document.getElementById('managerFilter');
   const appointmentTypeFilterEl = document.getElementById('appointmentTypeFilter');
+  const dateFilterEl = document.getElementById('dateFilter');
 
   function headerIndex(name) { return HEADERS.indexOf(name); }
   const arrivalGreetingIdx = HEADERS.reduce((acc, h, i) => h.startsWith('Arrival greeting') ? [...acc, i] : acc, []);
@@ -473,31 +475,45 @@
   }
 
   const sentimentOrder = ['positive', 'neutral', 'negative'];
-  const dailyDefs = [
-    ['22 Jul','2026-07-22'],['23 Jul','2026-07-23'],['24 Jul','2026-07-24'],['25 Jul','2026-07-25'],
-    ['26 Jul','2026-07-26'],['27 Jul','2026-07-27'],['28 Jul','2026-07-28'],['29 Jul','2026-07-29'],
-    ['30 Jul','2026-07-30'],['31 Jul','2026-07-31'],['1 Aug','2026-08-01'],
-  ];
-  const bucketDefs = [
-    ['12–4am', 0, 4], ['4–8am', 4, 8], ['8am–12pm', 8, 12],
-    ['12–4pm', 12, 16], ['4–8pm', 16, 20], ['8pm–12am', 20, 24],
-  ];
   const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function formatIsoShort(iso) {
     const [y, m, day] = iso.split('-');
     return `${parseInt(day, 10)} ${monthNames[parseInt(m, 10) - 1]}`;
   }
+  // Computed from the data's actual min/max date, not hardcoded — otherwise
+  // this silently goes stale (and starts dropping days) every time the sheet
+  // grows past whatever range was hardcoded on the last reload.
+  function computeDailyDefs(rows) {
+    const isoDates = [...new Set(rows.map(r => r.i).filter(Boolean))].sort();
+    if (isoDates.length === 0) return [];
+    const start = new Date(isoDates[0] + 'T00:00:00Z');
+    const end = new Date(isoDates[isoDates.length - 1] + 'T00:00:00Z');
+    const defs = [];
+    for (let t = start.getTime(); t <= end.getTime(); t += 86400000) {
+      const iso = new Date(t).toISOString().slice(0, 10);
+      defs.push([formatIsoShort(iso), iso]);
+    }
+    return defs;
+  }
+  const dailyDefs = computeDailyDefs(DATA);
+  const bucketDefs = [
+    ['12–4am', 0, 4], ['4–8am', 4, 8], ['8am–12pm', 8, 12],
+    ['12–4pm', 12, 16], ['4–8pm', 16, 20], ['8pm–12am', 20, 24],
+  ];
 
   const allManagers = [...new Set(DATA.filter(d => d.m !== 'Good').map(d => d.m))].sort();
   const allAppointmentTypes = [...new Set(DATA.map(d => d.ap).filter(Boolean))].sort();
   let activeManager = null; // null = every manager (including the "Good" bad-data row)
   let activeAppointmentType = null; // null = every appointment type
   let activeDailyBar = null; // ISO date of the day clicked in "Appointments over time", or null — scopes only the hours chart, no visible filter control
+  let activeDates = new Set(); // empty = every day; otherwise a group of ISO dates (range or arbitrary multi-select)
+  let lastClickedDateIdx = null; // for shift-click range selection
 
   function getFilteredData() {
     let data = DATA;
     if (activeManager) data = data.filter(d => d.m === activeManager);
     if (activeAppointmentType) data = data.filter(d => d.ap === activeAppointmentType);
+    if (activeDates.size > 0) data = data.filter(d => activeDates.has(d.i));
     return data;
   }
 
@@ -534,6 +550,42 @@
       activeAppointmentType,
       (value) => { activeAppointmentType = value; renderAll(); }
     );
+  }
+
+  // ===== Date filter — grouped multi-select: click to toggle a day in/out,
+  // shift-click to select a contiguous range from the last-clicked day =====
+  function renderDateFilter() {
+    dateFilterEl.innerHTML = '';
+    const labelEl = document.createElement('div');
+    labelEl.className = 'filter-label';
+    labelEl.textContent = 'Date (shift-click for a range):';
+    dateFilterEl.appendChild(labelEl);
+
+    const allPill = document.createElement('div');
+    allPill.className = 'pill' + (activeDates.size === 0 ? ' active' : '');
+    allPill.textContent = 'All days';
+    makeClickable(allPill, () => { activeDates.clear(); lastClickedDateIdx = null; renderAll(); });
+    dateFilterEl.appendChild(allPill);
+
+    dailyDefs.forEach(([label, iso], idx) => {
+      const p = document.createElement('div');
+      p.className = 'pill' + (activeDates.has(iso) ? ' active' : '');
+      p.textContent = label;
+      makeClickable(p, (e) => {
+        if (e && e.shiftKey && lastClickedDateIdx !== null) {
+          const lo = Math.min(lastClickedDateIdx, idx);
+          const hi = Math.max(lastClickedDateIdx, idx);
+          for (let i = lo; i <= hi; i++) activeDates.add(dailyDefs[i][1]);
+        } else if (activeDates.has(iso)) {
+          activeDates.delete(iso);
+        } else {
+          activeDates.add(iso);
+        }
+        lastClickedDateIdx = idx;
+        renderAll();
+      });
+      dateFilterEl.appendChild(p);
+    });
   }
 
   // ===== Stat strip =====
@@ -779,6 +831,7 @@
     const data = getFilteredData();
     renderManagerFilter();
     renderAppointmentTypeFilter();
+    renderDateFilter();
     renderStats(data);
     renderDaily(data);
     renderManagers(data);
