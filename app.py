@@ -24,9 +24,19 @@ SESSIONS = {}
 
 USER_CLINIC_ACCESS = {
     "hina.sharma@vetic.in": "Vetic Pet Care, Sector 49, Noida",
+    "bhawna.kashyap@vetic.in": "Vetic Pet Care Centre, Greater Kailash 1 ,New Delhi",
 }
 USER_DISPLAY_NAMES = {
     "hina.sharma@vetic.in": "Hina Sharma",
+    "bhawna.kashyap@vetic.in": "Bhawna Kashyap",
+}
+# Google Form responses don't collect a Clinic Name field, so rows always leave
+# it blank. Experience Manager Name is filled in every time and each manager
+# only ever reports for one clinic, so it's used as a fallback clinic match.
+EXPERIENCE_MANAGER_CLINIC_MAP = {
+    "hina": "Vetic Pet Care, Sector 49, Noida",
+    "hna": "Vetic Pet Care, Sector 49, Noida",
+    "bhawna": "Vetic Pet Care Centre, Greater Kailash 1 ,New Delhi",
 }
 
 app = FastAPI()
@@ -118,6 +128,24 @@ def get_display_fields(row):
                     values.append((label, str(value).strip()))
                 break
     return values
+
+def row_matches_clinic(row, clinic_cols, target):
+    for col in clinic_cols:
+        val = row.get(col, "")
+        if val and str(val).strip():
+            return normalize_text(val) == target
+    manager_col = next((k for k in row.keys() if normalize_text(k) == "experience manager name"), None)
+    if manager_col:
+        # Managers retype their name by hand on every form submission, so it
+        # varies row to row (e.g. "Bhawna Kashyap ", "Bhawna r", "H8Na" with a
+        # stray digit). Strip digits before matching, and match on whichever
+        # mapped key appears anywhere in the typed name, rather than requiring
+        # an exact match, so it keeps working across variations.
+        manager = re.sub(r"[0-9]", "", normalize_text(row.get(manager_col, "")))
+        for key, mapped_clinic in EXPERIENCE_MANAGER_CLINIC_MAP.items():
+            if key and key in manager:
+                return normalize_text(mapped_clinic) == target
+    return False
 
 def get_client_name(row):
     for key in row.keys():
@@ -249,6 +277,16 @@ def classify_feedback(value: str) -> str:
         return "unhappy" if unhappy_score >= happy_score else "happy"
     return "neutral"
 
+def get_row_feedback_state(row: dict) -> str:
+    feedback_values = [
+        str(value) for key, value in row.items()
+        if (key.lower().startswith("feedback") or key.lower().startswith("customer") or key.lower().startswith("rating"))
+        and value is not None and str(value).strip() != ""
+    ]
+    if not feedback_values:
+        return "neutral"
+    return classify_feedback(" ".join(feedback_values))
+
 def find_actions_for_appointment_type(appointment_type: str):
     normalized = normalize_text(appointment_type)
     if not normalized:
@@ -318,6 +356,44 @@ def get_clinics(request: Request, current_user: str = Depends(require_auth)):
     except Exception as e:
         return {"error": str(e), "clinics": []}
 
+@app.get("/api/summary")
+def get_summary(request: Request, current_user: str = Depends(require_auth)):
+    allowed_clinic = get_user_allowed_clinic(current_user)
+    try:
+        users, headers = get_sheet_records()
+        clinic_cols = [c for c in headers if 'clinic' in c.lower() or 'location' in c.lower() or 'center' in c.lower() or c in ['Region', 'City']]
+        clinics_to_summarize = [allowed_clinic] if allowed_clinic else FIXED_CLINICS
+
+        def count_bucket(rows):
+            happy = sum(1 for r in rows if get_row_feedback_state(r) == "happy")
+            unhappy = sum(1 for r in rows if get_row_feedback_state(r) == "unhappy")
+            return {"total": len(rows), "happy": happy, "unhappy": unhappy, "neutral": len(rows) - happy - unhappy}
+
+        clinic_summaries = []
+        matched_rowids = set()
+        for clinic in clinics_to_summarize:
+            target = normalize_text(clinic)
+            clinic_rows = [row for row in users if row_matches_clinic(row, clinic_cols, target)]
+            matched_rowids.update(row.get("db_rowid") for row in clinic_rows)
+            clinic_summaries.append({"clinic": clinic, **count_bucket(clinic_rows)})
+
+        # Rows that don't map to any known clinic (e.g. an unrecognized/typoed
+        # manager name) are surfaced explicitly rather than silently dropped —
+        # this exact class of bug has bitten this dashboard before.
+        unmatched_rows = [row for row in users if row.get("db_rowid") not in matched_rowids] if not allowed_clinic else []
+        unmatched = count_bucket(unmatched_rows) if not allowed_clinic else None
+
+        totals = {
+            "total": sum(s["total"] for s in clinic_summaries) + (unmatched["total"] if unmatched else 0),
+            "happy": sum(s["happy"] for s in clinic_summaries) + (unmatched["happy"] if unmatched else 0),
+            "unhappy": sum(s["unhappy"] for s in clinic_summaries) + (unmatched["unhappy"] if unmatched else 0),
+            "neutral": sum(s["neutral"] for s in clinic_summaries) + (unmatched["neutral"] if unmatched else 0),
+        }
+
+        return {"clinics": clinic_summaries, "unmatched": unmatched, "totals": totals}
+    except Exception as e:
+        return {"error": str(e), "clinics": [], "unmatched": None, "totals": None}
+
 @app.get("/api/feedbacks")
 def get_feedbacks(request: Request, current_user: str = Depends(require_auth)):
     try:
@@ -338,9 +414,9 @@ def search_users(request: Request, clinic: str = "", feedback: str = "", user_se
     if allowed_clinic:
         clinic = allowed_clinic
 
-    if not clinic and not user_search:
-        return {"users": []}
-        
+    # Restricted managers always have `clinic` auto-filled above, so reaching
+    # here with no clinic/search means an unrestricted admin browsing without
+    # a filter — show every sheet response rather than nothing.
     try:
         users, headers = get_sheet_records()
         clinic_cols = [c for c in headers if 'clinic' in c.lower() or 'location' in c.lower() or 'center' in c.lower() or c in ['Region', 'City']]
@@ -349,7 +425,7 @@ def search_users(request: Request, clinic: str = "", feedback: str = "", user_se
         
         if clinic:
             target = normalize_text(clinic)
-            users = [row for row in users if any(normalize_text(row.get(col, "")) == target for col in clinic_cols)]
+            users = [row for row in users if row_matches_clinic(row, clinic_cols, target)]
             
         if user_search:
             search_target = normalize_text(user_search)

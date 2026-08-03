@@ -338,6 +338,21 @@
       line-height: 1.5;
     }
 
+    .data-value.value-yes {
+      color: #137333;
+      font-weight: 700;
+    }
+
+    .data-value.value-no {
+      color: #c5221f;
+      font-weight: 700;
+    }
+
+    .data-value.data-value-empty {
+      color: #9aa0a6;
+      font-style: italic;
+    }
+
     .status-badge {
       display: inline-flex;
       align-items: center;
@@ -471,6 +486,80 @@
       margin-top: 10px;
     }
 
+    .clinic-summary-panel {
+      margin-bottom: 24px;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+    }
+
+    .clinic-summary-header {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #5f6368;
+      margin-bottom: 12px;
+    }
+
+    .clinic-summary-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 10px 4px;
+      border-bottom: 1px solid #f1f3f4;
+      flex-wrap: wrap;
+    }
+
+    .clinic-summary-row:last-child {
+      border-bottom: none;
+    }
+
+    .clinic-summary-row.clickable {
+      cursor: pointer;
+      border-radius: 8px;
+    }
+
+    .clinic-summary-row.clickable:hover {
+      background: #f7fafd;
+    }
+
+    .clinic-summary-row.total-row {
+      font-weight: 700;
+      border-top: 2px solid #e2e8f0;
+      margin-top: 4px;
+    }
+
+    .clinic-summary-name {
+      flex: 1;
+      min-width: 160px;
+      font-weight: 600;
+      color: #1a1d20;
+      font-size: 14px;
+    }
+
+    .clinic-summary-counts {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .clinic-summary-count {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .clinic-summary-count.total { background: #eef2ff; color: #3730a3; }
+    .clinic-summary-count.happy { background: #e6f4ea; color: #137333; }
+    .clinic-summary-count.unhappy { background: #fde7e9; color: #c5221f; }
+    .clinic-summary-count.neutral { background: #f1f3f4; color: #5f6368; }
+
     /* Skeleton Loading */
     .skeleton-card {
       background: #fff;
@@ -550,6 +639,20 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .page-jump-input {
+      width: 52px;
+      padding: 7px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      text-align: center;
+      font-weight: 500;
+      color: #374151;
+      font-size: 14px;
+    }
+    .page-jump-input:focus {
+      outline: none;
+      border-color: #1a73e8;
+    }
   </style>
 </head>
 
@@ -574,10 +677,19 @@
           style="display: inline-flex; align-items: center; justify-content: center; padding: 14px 28px; border-radius: 999px; background: #1A73E8; color: #fff; text-decoration: none; font-weight: 800; font-size: 16px; box-shadow: 0 8px 24px rgba(26, 115, 232, 0.3); transition: transform 0.15s ease;" onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'">Open Form</a>
 
         <button type="button" onclick="exportToCSV()" style="display: inline-flex; align-items: center; justify-content: center; padding: 12px 20px; border-radius: 999px; background: #fff; color: #1a73e8; border: 1px solid #1a73e8; text-decoration: none; font-weight: 700; font-size: 14px; cursor: pointer; transition: background 0.15s ease;" onmouseover="this.style.background='#f0f4fd'" onmouseout="this.style.background='#fff'">Export CSV</button>
+
+        <button type="button" id="reloadBtn" onclick="reloadDashboard()" style="display: inline-flex; align-items: center; gap: 8px; justify-content: center; padding: 12px 20px; border-radius: 999px; background: #fff; color: #1a73e8; border: 1px solid #1a73e8; text-decoration: none; font-weight: 700; font-size: 14px; cursor: pointer; transition: background 0.15s ease;" onmouseover="this.style.background='#f0f4fd'" onmouseout="this.style.background='#fff'">
+          <span id="reloadIcon" style="display:inline-block; transition: transform 0.5s ease;">&#8635;</span> Reload
+        </button>
       </div>
     </div>
     <div id="sessionBanner"
       style="margin-bottom: 24px; padding: 10px 14px; border-radius: 12px; background: rgba(26, 115, 232, 0.08); border: 1px solid rgba(26, 115, 232, 0.18); color: #1A3C82; font-weight: 600; font-size: 13px; display: none; max-width: 100%; width: fit-content;">
+    </div>
+
+    <div id="clinicSummaryPanel" class="clinic-summary-panel" style="display:none;">
+      <div class="clinic-summary-header">Records by Clinic</div>
+      <div id="clinicSummaryTable"></div>
     </div>
 
     <div class="search-wrapper" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
@@ -621,7 +733,13 @@
     
     <div id="paginationControls" class="pagination-controls" style="display:none;">
       <button class="pagination-btn" id="btnPrev" onclick="changePage(-1)">Previous</button>
-      <span id="pageIndicator" style="font-weight: 500; color: #374151;">Page 1</span>
+      <span style="font-weight: 500; color: #374151; display:inline-flex; align-items:center; gap:8px;">
+        Page
+        <input type="number" id="pageJumpInput" class="page-jump-input" min="1" value="1"
+               onkeydown="if(event.key==='Enter'){ jumpToPage(); event.preventDefault(); }">
+        of <span id="totalPagesLabel">1</span>
+      </span>
+      <button class="pagination-btn" id="btnGoToPage" onclick="jumpToPage()">Go</button>
       <button class="pagination-btn" id="btnNext" onclick="changePage(1)">Next</button>
     </div>
   </div>
@@ -687,6 +805,104 @@
       }
     }
 
+    function jumpToPage() {
+      const input = document.getElementById('pageJumpInput');
+      let page = parseInt(input.value, 10);
+      if (isNaN(page)) {
+        input.value = currentPage;
+        return;
+      }
+      page = Math.max(1, Math.min(page, totalPages));
+      input.value = page;
+      if (page !== currentPage) {
+        currentPage = page;
+        fetchUsers();
+      }
+    }
+
+    // Summary panel: record counts per clinic (server-side aggregation, not
+    // paginated), with happy/unhappy/neutral breakdown. Click a clinic row to
+    // jump straight to its filtered records.
+    async function loadClinicSummary() {
+      const panel = document.getElementById('clinicSummaryPanel');
+      const table = document.getElementById('clinicSummaryTable');
+      try {
+        const res = await fetch('/api/summary');
+        const data = await res.json();
+        if (!data.clinics || data.clinics.length === 0) {
+          panel.style.display = 'none';
+          return;
+        }
+
+        const canChangeClinic = !(currentSession && currentSession.allowed_clinic);
+
+        const countsHtml = (c) => `
+          <div class="clinic-summary-counts">
+            <span class="clinic-summary-count total">${c.total} total</span>
+            <span class="clinic-summary-count happy">${c.happy} happy</span>
+            <span class="clinic-summary-count unhappy">${c.unhappy} unhappy</span>
+            <span class="clinic-summary-count neutral">${c.neutral} neutral</span>
+          </div>
+        `;
+
+        let html = data.clinics.map(c => `
+          <div class="clinic-summary-row ${canChangeClinic ? 'clickable' : ''}" ${canChangeClinic ? `onclick="jumpToClinicSummary('${escapeHtml(c.clinic).replace(/'/g, "\\'")}')"` : ''}>
+            <div class="clinic-summary-name">${escapeHtml(c.clinic)}</div>
+            ${countsHtml(c)}
+          </div>
+        `).join('');
+
+        if (data.unmatched && data.unmatched.total > 0) {
+          html += `
+            <div class="clinic-summary-row">
+              <div class="clinic-summary-name" title="Rows whose manager name didn't match any known clinic">Unmatched / Unknown Clinic</div>
+              ${countsHtml(data.unmatched)}
+            </div>
+          `;
+        }
+
+        if (data.totals) {
+          html += `
+            <div class="clinic-summary-row total-row">
+              <div class="clinic-summary-name">Grand Total</div>
+              ${countsHtml(data.totals)}
+            </div>
+          `;
+        }
+
+        table.innerHTML = html;
+        panel.style.display = 'block';
+      } catch (err) {
+        console.error('Failed to load clinic summary:', err);
+        panel.style.display = 'none';
+      }
+    }
+
+    function jumpToClinicSummary(clinicName) {
+      if (currentSession && currentSession.allowed_clinic) return;
+      document.getElementById('clinicSearch').value = clinicName;
+      currentPage = 1;
+      fetchUsers();
+      document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function reloadDashboard() {
+      const icon = document.getElementById('reloadIcon');
+      const btn = document.getElementById('reloadBtn');
+      btn.disabled = true;
+      icon.style.transform = 'rotate(360deg)';
+      try {
+        await Promise.all([fetchUsers(), loadClinicSummary()]);
+        showToast('Dashboard refreshed');
+      } catch (err) {
+        console.error('Failed to reload dashboard:', err);
+        showToast('Reload failed, please try again', 'error');
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { icon.style.transform = 'rotate(0deg)'; }, 500);
+      }
+    }
+
     // Fetch clinics and session info on load
     async function loadClinics() {
       try {
@@ -732,9 +948,8 @@
           });
         }
 
-        if (session.allowed_clinic) {
-          fetchUsers();
-        }
+        fetchUsers();
+        loadClinicSummary();
       } catch (err) {
         console.error('Failed to load clinics or session:', err);
       }
@@ -757,12 +972,9 @@
       const container = document.getElementById('resultsContainer');
       const statsContainer = document.getElementById('summaryStats');
       const pageControls = document.getElementById('paginationControls');
-      if ((!clinicName || clinicName.trim() === '') && (!userSearch || userSearch.trim() === '')) {
-        container.innerHTML = '<div class="empty-state">Select a clinic or search for a user to view patient history records.</div>';
-        statsContainer.style.display = 'none';
-        pageControls.style.display = 'none';
-        return;
-      }
+      // Restricted managers always have clinicName auto-filled above, so an
+      // empty clinicName here means an unrestricted admin with no filter set
+      // — fall through and let the API return every sheet response.
 
       container.innerHTML = `
         <div class="skeleton-card"><div class="skeleton-line short"></div><div class="skeleton-line medium"></div></div>
@@ -805,7 +1017,10 @@
         currentPage = data.current_page || 1;
         
         pageControls.style.display = totalPages > 1 ? 'flex' : 'none';
-        document.getElementById('pageIndicator').innerText = `Page ${currentPage} of ${totalPages}`;
+        const pageJumpInput = document.getElementById('pageJumpInput');
+        pageJumpInput.value = currentPage;
+        pageJumpInput.max = totalPages;
+        document.getElementById('totalPagesLabel').innerText = totalPages;
         document.getElementById('btnPrev').disabled = currentPage <= 1;
         document.getElementById('btnNext').disabled = currentPage >= totalPages;
 
@@ -951,6 +1166,8 @@
         .filter(Boolean);
     }
 
+    const MODAL_HIDDEN_KEYS = ['db_rowid', 'source_fingerprint'];
+
     function getOrderedFieldEntries(row) {
       const preferredKeys = ['client_name', 'appointment_type', 'date', 'resource_details', 'booking_source', 'done'];
       const entries = [];
@@ -958,22 +1175,28 @@
       preferredKeys.forEach(keyName => {
         const actualKey = Object.keys(row).find(k => normalizeKey(k) === normalizeKey(keyName));
         if (actualKey && !entries.some(([existingKey]) => existingKey === actualKey)) {
-          const value = row[actualKey];
-          if (value !== null && value !== undefined && value !== '') {
-            entries.push([actualKey, value]);
-          }
+          entries.push([actualKey, row[actualKey]]);
         }
       });
 
+      // Include every remaining column from the sheet, even ones blank on this
+      // particular record, so the modal always mirrors the full sheet schema.
       Object.keys(row).forEach(key => {
+        if (MODAL_HIDDEN_KEYS.includes(key)) return;
         if (entries.some(([existingKey]) => existingKey === key)) return;
-        const value = row[key];
-        if (value !== null && value !== undefined && value !== '') {
-          entries.push([key, value]);
-        }
+        entries.push([key, row[key]]);
       });
 
       return entries;
+    }
+
+    // Yes/No style questions get a color-coded value: green for Yes, red for
+    // No, muted for anything else (blank, N/A, free text, etc.).
+    function getYesNoClass(value) {
+      const normalized = String(value ?? '').trim().toLowerCase();
+      if (normalized === 'yes') return 'value-yes';
+      if (normalized === 'no') return 'value-no';
+      return '';
     }
 
     function getFeedbackState(row) {
@@ -1025,12 +1248,15 @@
 
       let fieldsHtml = '';
       getOrderedFieldEntries(user).forEach(([key, value]) => {
-        const val = String(value);
+        const hasValue = value !== null && value !== undefined && String(value).trim() !== '';
+        const val = hasValue ? String(value) : 'Not provided';
         const isLong = val.length > 80;
+        const yesNoClass = hasValue ? getYesNoClass(value) : '';
+        const valueClass = ['data-value', yesNoClass, hasValue ? '' : 'data-value-empty'].filter(Boolean).join(' ');
         fieldsHtml += `
         <div class="data-row ${isLong ? 'full-width' : ''}">
           <div class="data-label">${escapeHtml(key)}</div>
-          <div class="data-value">${escapeHtml(val)}</div>
+          <div class="${valueClass}">${escapeHtml(val)}</div>
         </div>
       `;
       });
@@ -1121,6 +1347,16 @@
     });
 
 
+
+    // Auto-refresh: re-pull from the sheet-backed API every 30s so an open
+    // dashboard doesn't show stale data. Skipped while the record modal is
+    // open so it doesn't yank the view away mid-review.
+    setInterval(() => {
+      const modal = document.getElementById('userModal');
+      if (modal && modal.style.display === 'flex') return;
+      fetchUsers();
+      loadClinicSummary();
+    }, 30000);
 
     // Init
     loadClinics();
