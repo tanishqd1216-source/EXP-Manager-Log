@@ -101,11 +101,16 @@
   .hbar-name.wide { width: 168px; font-size: 10px; line-height: 1.25; }
   .mini-note { font-size: 10.5px; color: var(--text-muted); margin-top: 6px; }
 
-  /* Calendar date-range box */
+  /* Calendar date-range popover — hidden until the "Date range" stat is clicked */
   .calendar-box {
+    display: none;
+    position: fixed;
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
-    padding: 10px 14px 12px; margin-bottom: 14px;
+    padding: 10px 14px 12px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+    z-index: 900;
   }
+  .calendar-box.open { display: block; }
   .calendar-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .calendar-clear {
     font-size: 10.5px; font-weight: 700; color: var(--series-1); cursor: pointer;
@@ -234,7 +239,6 @@
 
   <div class="filter-row" id="managerFilter"></div>
   <div class="filter-row" id="appointmentTypeFilter"></div>
-  <div class="calendar-box" id="calendarBox"></div>
   <div class="stat-strip" id="statStrip"></div>
   <div class="grid">
     <div class="card">
@@ -295,6 +299,8 @@
   </div>
   <div class="record-modal-body" id="recordModalBody"></div>
 </div>
+
+<div class="calendar-box" id="calendarBox"></div>
 </div>
 
 <script>
@@ -471,6 +477,27 @@
   const managerFilterEl = document.getElementById('managerFilter');
   const appointmentTypeFilterEl = document.getElementById('appointmentTypeFilter');
   const calendarBoxEl = document.getElementById('calendarBox');
+  let calendarOpen = false;
+
+  function toggleCalendar(anchorEl) {
+    calendarOpen = !calendarOpen;
+    if (calendarOpen) {
+      renderCalendar();
+      const rect = anchorEl.getBoundingClientRect();
+      calendarBoxEl.style.top = (rect.bottom + 6) + 'px';
+      calendarBoxEl.style.left = rect.left + 'px';
+      calendarBoxEl.classList.add('open');
+    } else {
+      calendarBoxEl.classList.remove('open');
+    }
+  }
+  document.addEventListener('click', (e) => {
+    if (!calendarOpen) return;
+    if (calendarBoxEl.contains(e.target)) return;
+    if (e.target.closest('#dateRangeStat')) return;
+    calendarOpen = false;
+    calendarBoxEl.classList.remove('open');
+  });
 
   function headerIndex(name) { return HEADERS.indexOf(name); }
   const arrivalGreetingIdx = HEADERS.reduce((acc, h, i) => h.startsWith('Arrival greeting') ? [...acc, i] : acc, []);
@@ -673,7 +700,7 @@
 
     const stats = [
       { label: 'Total entries', value: total, onClick: () => openDrawer('All entries', `${total} rows, chronological`, data.slice().sort((a,b)=>(a.i||'').localeCompare(b.i||''))) },
-      { label: 'Date range', value: rangeLabel, small: true, onClick: () => openDrawer('All entries by date', total ? `${dates[0]} to ${dates[dates.length-1]}` : 'No entries in this selection', data.slice().sort((a,b)=>(a.i||'').localeCompare(b.i||''))) },
+      { label: 'Date range', value: rangeLabel, small: true, id: 'dateRangeStat', onClick: (el) => toggleCalendar(el) },
       { label: '# Managers', value: managersInView.length, onClick: () => openDrawer('Entries by manager', `${managersInView.length} manager(s) in this selection`, data.slice().sort((a,b)=> a.m.localeCompare(b.m))) },
       { label: '% Captured', value: total ? Math.round(captured/total*100) + '%' : '—', onClick: () => openDrawer('Captured reactions', `${captured} of ${total} rows have text — ambiguous ones surfaced via the flag`, data.slice().sort((a,b)=> (b.a - a.a))) },
       { label: 'Dominant sentiment', value: dominant ? dominant.charAt(0).toUpperCase()+dominant.slice(1) : '—', small: true, onClick: () => { if (dominant) openDrawer(`${dominant.charAt(0).toUpperCase()+dominant.slice(1)} reactions`, `${sentCounts[dominant]} of ${total} rows (${Math.round(sentCounts[dominant]/total*100)}%)`, data.filter(d => d.s === dominant)); } },
@@ -681,8 +708,9 @@
     stats.forEach(s => {
       const el = document.createElement('div');
       el.className = 'stat';
+      if (s.id) el.id = s.id;
       el.innerHTML = `<div class="label">${s.label}</div><div class="value${s.small ? ' small' : ''}">${s.value}</div>`;
-      makeClickable(el, s.onClick);
+      makeClickable(el, () => s.onClick(el));
       statStrip.appendChild(el);
     });
   }
